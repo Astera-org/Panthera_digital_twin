@@ -1,0 +1,20 @@
+{
+  "name": "digital-twin",
+  "version": "1.0.0",
+  "description": "Digital Twin - Real-time robot visualization and control",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.163.0",
+    "urdf-loader": "^0.12.5",
+    "d3": "^7.9.0",
+    "socket.io-client": "^4.7.0"
+  },
+  "devDependencies": {
+    "vite": "^4.5.0"
+  }
+}

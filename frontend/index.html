@@ -1,0 +1,1656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>Digital Twin - Robot Visualization & Control</title>
+    <script>
+        (function() {
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = localStorage.getItem('theme') || (prefersDark ? 'dark' : 'light');
+            const bgColor = theme === 'dark' ? '#000000' : '#ffffff';
+            document.write('<style>html,body{margin:0;padding:0;background-color:' + bgColor + ';}</style>');
+            if (document.documentElement) {
+                document.documentElement.setAttribute('data-theme', theme);
+            }
+        })();
+    </script>
+    <style>
+        :root {
+            --bg-primary: #000000;
+            --glass-bg: rgba(20, 20, 20, 0.5);
+            --glass-border: rgba(255, 255, 255, 0.12);
+            --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+            --text-primary: #ffffff;
+            --text-secondary: #ebebf5;
+            --text-tertiary: #aeaeb2;
+            --accent: #0a84ff;
+            --accent-hover: #409cff;
+            --accent-secondary: rgba(10, 132, 255, 0.15);
+            --spring: cubic-bezier(0.4, 0, 0.2, 1);
+            --success: #34c759;
+            --danger: #ff453a;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f5f5f7;
+            --glass-bg: rgba(245, 245, 245, 0.85);
+            --glass-border: rgba(0, 0, 0, 0.15);
+            --text-primary: #1d1d1f;
+            --text-secondary: #424245;
+            --text-tertiary: #86868b;
+            --accent-secondary: rgba(10, 132, 255, 0.12);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            overflow: hidden;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #container { position: relative; width: 100vw; height: 100vh; }
+
+        #canvas-container {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 1;
+            background: var(--bg-primary);
+        }
+
+        #canvas { width: 100%; height: 100%; display: block; }
+
+        /* Top control bar */
+        #top-control-bar {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 9px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
+            border: 0.5px solid var(--glass-border);
+            border-radius: 21px;
+            box-shadow: var(--glass-shadow);
+            z-index: 100;
+        }
+
+        .control-bar-section {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .control-bar-divider {
+            width: 1px;
+            height: 28px;
+            background: var(--glass-border);
+            margin: 0 8px;
+        }
+
+        .tool-button, .control-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            padding: 5px 12px;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s var(--spring);
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .tool-button:hover, .control-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            transform: scale(1.05);
+        }
+
+        .tool-button.active, .control-button.active {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3);
+        }
+
+        [data-theme="light"] .tool-button, [data-theme="light"] .control-button {
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="light"] .tool-button:hover, [data-theme="light"] .control-button:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        .control-button.danger {
+            color: var(--danger);
+            border-color: rgba(255, 69, 58, 0.3);
+        }
+
+        .control-button.danger:hover {
+            background: rgba(255, 69, 58, 0.15);
+        }
+
+        .control-button.warning {
+            color: #ff9500;
+            border-color: rgba(255, 149, 0, 0.3);
+        }
+
+        .control-button.warning:hover {
+            background: rgba(255, 149, 0, 0.15);
+        }
+
+        /* Connection indicator in top bar */
+        .status-dot-small {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .status-dot-small.connected {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .status-dot-small.disconnected {
+            background: var(--text-tertiary);
+        }
+
+        /* Floating panels */
+        .floating-panel {
+            position: fixed;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
+            border: 0.5px solid var(--glass-border);
+            border-radius: 16px;
+            box-shadow: var(--glass-shadow);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 280px;
+            animation: slideIn 0.4s var(--spring);
+        }
+
+        .floating-panel.hidden { display: none; }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .floating-panel-header {
+            padding: 16px;
+            border-bottom: 0.5px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-primary);
+            user-select: none;
+            cursor: move;
+            position: relative;
+        }
+
+        .floating-panel-header button {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            border: none;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .floating-panel-header button:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: var(--text-primary);
+        }
+
+        .panel-close-btn {
+            position: absolute !important;
+            top: 50%;
+            right: 14px;
+            transform: translateY(-50%);
+        }
+
+        .panel-close-btn:hover {
+            background: rgba(255, 100, 100, 0.15) !important;
+            color: #ff6b6b !important;
+        }
+
+        /* Joints panel header controls */
+        .joints-panel-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            margin-right: 32px;
+        }
+
+        #unit-toggle {
+            display: flex;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        #unit-toggle button {
+            width: auto;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 500;
+            border-radius: 0;
+            background: transparent;
+            color: var(--text-tertiary);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #unit-toggle button:hover {
+            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        #unit-toggle button.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        #reset-joints-btn {
+            width: auto !important;
+            padding: 4px 12px !important;
+            font-size: 11px;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #reset-joints-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: var(--text-primary);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .floating-panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            min-height: 0;
+        }
+
+        .floating-panel-content::-webkit-scrollbar { width: 6px; }
+        .floating-panel-content::-webkit-scrollbar-track { background: transparent; }
+        .floating-panel-content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+        }
+
+        /* Connection panel */
+        #floating-connection-panel {
+            top: 80px;
+            right: 20px;
+            width: 320px;
+        }
+
+        .connection-status-section {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        .status-dot.disconnected {
+            background: var(--text-tertiary);
+        }
+
+        .status-text {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .connection-form {
+            margin-bottom: 12px;
+        }
+
+        .connection-form label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-bottom: 6px;
+        }
+
+        .connection-form input {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .connection-form input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .connection-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .connection-buttons button {
+            flex: 1;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .connection-buttons button.primary {
+            background: var(--accent);
+            color: white;
+            border: none;
+        }
+
+        .connection-buttons button.primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .connection-buttons button:not(.primary) {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--glass-border);
+        }
+
+        .connection-buttons button:not(.primary):hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .connection-buttons button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .robot-info, .robot-controls {
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .info-row:last-child { margin-bottom: 0; }
+
+        .info-label { color: var(--text-tertiary); }
+        .info-value { color: var(--text-primary); font-weight: 500; }
+        .info-value.demo { color: #ff9f0a; }
+        .info-value.live { color: var(--success); }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .control-grid button {
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+        }
+
+        .control-grid button:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .control-grid button.danger {
+            color: var(--danger);
+            border-color: rgba(255, 69, 58, 0.3);
+        }
+
+        .control-grid button.danger:hover {
+            background: rgba(255, 69, 58, 0.15);
+        }
+
+        .control-grid button.warning {
+            color: #ff9500;
+            border-color: rgba(255, 149, 0, 0.3);
+        }
+
+        .control-grid button.warning:hover {
+            background: rgba(255, 149, 0, 0.15);
+        }
+
+        .velocity-control label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-bottom: 6px;
+        }
+
+        .velocity-control input[type="range"] {
+            width: 100%;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            -webkit-appearance: none;
+        }
+
+        .velocity-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+        }
+
+        /* Control Mode Section */
+        .control-mode-section {
+            margin-bottom: 16px;
+        }
+
+        .section-label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .mode-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .mode-button {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 8px;
+            border-radius: 8px;
+            border: 1px solid var(--glass-border);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s var(--spring);
+        }
+
+        .mode-button:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .mode-button.active {
+            background: var(--accent-secondary);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .mode-button .mode-name {
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .mode-description {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            text-align: center;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+        }
+
+        /* Mode-specific joint control styles */
+        #joint-controls.gravity-mode .joint-slider {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        #joint-controls.gravity-mode::before {
+            content: "Robot in free-motion mode";
+            display: block;
+            text-align: center;
+            padding: 12px;
+            margin-bottom: 12px;
+            background: rgba(52, 199, 89, 0.1);
+            border: 1px solid rgba(52, 199, 89, 0.3);
+            border-radius: 8px;
+            color: var(--success);
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        #joint-controls.impedance-mode .joint-control {
+            border-color: rgba(10, 132, 255, 0.3);
+        }
+
+        #joint-controls.impedance-mode::before {
+            content: "Impedance mode - sliders set target position";
+            display: block;
+            text-align: center;
+            padding: 12px;
+            margin-bottom: 12px;
+            background: rgba(10, 132, 255, 0.1);
+            border: 1px solid rgba(10, 132, 255, 0.3);
+            border-radius: 8px;
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        /* Files panel */
+        #floating-files-panel {
+            top: 80px;
+            left: 20px;
+            width: 260px;
+            height: 280px;
+        }
+
+        /* FK (End Effector) panel */
+        #floating-fk-panel {
+            top: 80px;
+            right: 360px;
+            width: 200px;
+        }
+
+        .fk-display {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .fk-section {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .fk-section-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .fk-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+        }
+
+        .fk-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .fk-value {
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .fk-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 6px;
+        }
+
+        .fk-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-tertiary);
+        }
+
+        .fk-status-dot.connected {
+            background: #34c759;
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.5);
+        }
+
+        .fk-status-dot.disconnected {
+            background: #ff453a;
+        }
+
+        .fk-status-text {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Waypoints panel */
+        #floating-waypoints-panel {
+            top: 80px;
+            right: 580px;
+            width: 280px;
+            max-height: 500px;
+        }
+
+        .waypoints-header-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            margin-right: 32px;
+        }
+
+        .waypoint-header-btn {
+            padding: 4px 10px !important;
+            font-size: 11px !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 6px !important;
+            color: var(--text-secondary) !important;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .waypoint-header-btn:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .waypoints-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .waypoints-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+
+        .waypoints-empty-state {
+            color: var(--text-tertiary);
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+        }
+
+        .waypoint-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            transition: all 0.2s;
+        }
+
+        .waypoint-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .waypoint-index {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .waypoint-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .waypoint-positions {
+            font-size: 10px;
+            font-family: 'SF Mono', Monaco, monospace;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .waypoint-duration {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .waypoint-duration-label {
+            font-size: 10px;
+            color: var(--text-tertiary);
+        }
+
+        .waypoint-duration-input {
+            width: 50px;
+            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 11px;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .waypoint-duration-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .waypoint-duration-unit {
+            font-size: 10px;
+            color: var(--text-tertiary);
+        }
+
+        .waypoint-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .waypoint-action-btn {
+            width: 26px;
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.06);
+            border: none;
+            border-radius: 6px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 12px;
+        }
+
+        .waypoint-action-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: var(--text-primary);
+        }
+
+        .waypoint-action-btn.goto:hover {
+            background: rgba(10, 132, 255, 0.2);
+            color: var(--accent);
+        }
+
+        .waypoint-action-btn.delete:hover {
+            background: rgba(255, 69, 58, 0.2);
+            color: var(--danger);
+        }
+
+        .waypoints-add-section {
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .waypoint-add-btn {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .waypoint-add-btn:hover {
+            background: rgba(10, 132, 255, 0.1);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .waypoint-add-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .waypoint-add-icon {
+            font-size: 16px;
+            font-weight: 300;
+        }
+
+        .trajectory-controls {
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .trajectory-progress-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .trajectory-progress-bar {
+            flex: 1;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .trajectory-progress-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--accent);
+            border-radius: 3px;
+            transition: width 0.1s linear;
+        }
+
+        .trajectory-progress-text {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            min-width: 36px;
+            text-align: right;
+        }
+
+        .trajectory-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .trajectory-run-btn {
+            flex: 1;
+            padding: 12px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .trajectory-run-btn:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .trajectory-run-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .trajectory-stop-btn {
+            flex: 1;
+            padding: 12px;
+            background: var(--danger);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .trajectory-stop-btn:hover {
+            background: #ff6b6b;
+        }
+
+        .waypoints-status {
+            display: flex;
+            justify-content: center;
+            padding-top: 8px;
+        }
+
+        .waypoints-count {
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        /* Joints panel */
+        #floating-joints-panel {
+            top: 370px;
+            left: 20px;
+            width: 280px;
+            height: calc(100vh - 390px);
+        }
+
+        #joint-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .joint-control {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+        }
+
+        .joint-control.connected-mode {
+            border-color: rgba(52, 199, 89, 0.3);
+        }
+
+        .joint-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .joint-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .joint-slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .joint-limit-min {
+            font-size: 10px;
+            color: var(--text-tertiary);
+            width: 38px;
+            text-align: right;
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+            padding: 2px 4px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 4px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .joint-limit-max {
+            font-size: 10px;
+            color: var(--text-tertiary);
+            width: 38px;
+            text-align: left;
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+            padding: 2px 4px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 4px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .joint-limit-min:hover, .joint-limit-max:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+
+        .joint-limit-min:focus, .joint-limit-max:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-primary);
+        }
+
+        .joint-limit-min::-webkit-outer-spin-button,
+        .joint-limit-min::-webkit-inner-spin-button,
+        .joint-limit-max::-webkit-outer-spin-button,
+        .joint-limit-max::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .joint-limit-min[type=number],
+        .joint-limit-max[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
+        .joint-slider-container {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .joint-slider {
+            width: 100%;
+            height: 20px;
+            -webkit-appearance: none;
+            background: transparent;
+        }
+
+        .joint-slider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .joint-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid var(--accent);
+            margin-top: -6px;
+            cursor: grab;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .joint-slider:active::-webkit-slider-thumb {
+            cursor: grabbing;
+        }
+
+        .joint-value-input-container {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            flex-shrink: 0;
+            margin-left: 4px;
+        }
+
+        .joint-value-input {
+            width: 42px;
+            padding: 2px 4px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 10px;
+            font-variant-numeric: tabular-nums;
+            transition: all 0.2s;
+            text-align: right;
+            font-weight: 500;
+        }
+
+        .joint-value-input::-webkit-outer-spin-button,
+        .joint-value-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .joint-value-input[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
+        .joint-value-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .joint-value-input:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .joint-value-unit {
+            font-size: 9px;
+            color: var(--text-tertiary);
+            min-width: 18px;
+        }
+
+        /* Model graph panel */
+        #floating-model-tree {
+            top: 80px;
+            right: 360px;
+            width: 320px;
+            height: 300px;
+        }
+
+        .model-graph-content {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            padding: 12px;
+        }
+
+        #model-graph-svg {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            cursor: grab;
+        }
+
+        #model-graph-svg:active { cursor: grabbing; }
+
+        #graph-empty-state {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-tertiary);
+            font-size: 12px;
+        }
+
+        #graph-empty-state.hidden { display: none; }
+
+        /* Drop zone */
+        #drop-zone {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border: 2px dashed transparent;
+            background: rgba(0, 0, 0, 0);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        #drop-zone.drag-over {
+            display: flex;
+            border-color: var(--accent);
+            background: var(--accent-secondary);
+            backdrop-filter: blur(20px);
+            pointer-events: all;
+        }
+
+        #drop-text {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        #drop-text strong {
+            color: var(--accent);
+            font-size: 17px;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        /* Hover info */
+        #hover-info {
+            position: fixed;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 16px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 0.5px solid var(--glass-border);
+            border-radius: 16px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+            pointer-events: none;
+            z-index: 60;
+        }
+
+        #hover-info.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        #hover-link-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--accent);
+            margin-bottom: 4px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            color: var(--text-tertiary);
+            text-align: center;
+            padding: 24px;
+            font-size: 12px;
+        }
+
+        /* Error toast */
+        .error-toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 20px;
+            background: rgba(255, 69, 58, 0.9);
+            color: white;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 1000;
+            animation: slideUp 0.3s var(--spring);
+        }
+
+        .error-toast.fade-out {
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+
+        /* File tree styles */
+        .file-tree { font-size: 13px; }
+
+        .tree-item {
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 6px;
+            color: var(--text-primary);
+        }
+
+        .tree-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .tree-item.selected {
+            background: rgba(0, 122, 255, 0.2);
+        }
+
+        .tree-item-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tree-item .icon { font-size: 14px; }
+        .tree-item .name { flex: 1; }
+
+        /* Joint controls connected mode indicator */
+        #joint-controls.connected-mode .joint-slider::-webkit-slider-thumb {
+            border-color: var(--success);
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.4);
+        }
+
+        /* Status info display */
+        #status-info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            padding: 12px 16px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 0.5px solid var(--glass-border);
+            border-radius: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            z-index: 50;
+            line-height: 1.6;
+        }
+
+        #status-info strong { color: var(--text-primary); }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <div id="top-control-bar">
+                <!-- Connection indicator will be injected here by ConnectionUI -->
+
+                <div class="control-bar-section">
+                    <button class="control-button active" id="show-visual" data-checked="true">
+                        <span data-i18n="visual">Visual</span>
+                    </button>
+                    <button class="control-button" id="show-collision" data-checked="false">
+                        <span data-i18n="collision">Collision</span>
+                    </button>
+                    <button class="control-button" id="toggle-axes-btn" data-checked="false">
+                        <span data-i18n="axes">Axes</span>
+                    </button>
+                    <button class="control-button active" id="toggle-shadow" data-checked="true">
+                        <span data-i18n="shadow">Shadow</span>
+                    </button>
+                </div>
+
+                <div class="control-bar-divider"></div>
+
+                <div class="control-bar-section">
+                    <button class="tool-button active" id="toggle-files-panel">
+                        <span data-i18n="files">Files</span>
+                    </button>
+                    <button class="tool-button active" id="toggle-joints-panel">
+                        <span data-i18n="joints">Joints</span>
+                    </button>
+                    <button class="tool-button" id="toggle-model-tree">
+                        <span data-i18n="structure">Structure</span>
+                    </button>
+                    <button class="tool-button" id="toggle-fk-panel">
+                        <span>End Effector</span>
+                    </button>
+                    <button class="tool-button" id="toggle-waypoints-panel">
+                        <span>Waypoints</span>
+                    </button>
+                </div>
+
+                <div class="control-bar-divider"></div>
+
+                <div class="control-bar-section">
+                    <button class="tool-button" id="theme-toggle">
+                        <span class="tool-button-icon">🌙</span>
+                    </button>
+                </div>
+            </div>
+
+            <canvas id="canvas"></canvas>
+
+            <!-- Connection Panel -->
+            <div id="floating-connection-panel" class="floating-panel">
+                <div class="floating-panel-header">
+                    <span>Robot Connection</span>
+                    <button class="panel-close-btn" title="Close">×</button>
+                </div>
+                <div class="floating-panel-content">
+                    <div class="connection-status-section">
+                        <div class="connection-status">
+                            <span class="status-dot disconnected"></span>
+                            <span class="status-text">Disconnected</span>
+                        </div>
+                    </div>
+
+                    <div class="connection-form">
+                        <label for="server-url">Server URL</label>
+                        <input type="text" id="server-url" value="http://localhost:5000" placeholder="http://localhost:5000">
+                    </div>
+
+                    <div class="connection-buttons">
+                        <button id="connect-btn" class="primary">Connect</button>
+                        <button id="disconnect-btn" disabled>Disconnect</button>
+                    </div>
+
+                    <div class="robot-info" style="display: none;">
+                        <div class="info-row">
+                            <span class="info-label">Robot:</span>
+                            <span class="info-value" id="robot-name">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Joints:</span>
+                            <span class="info-value" id="joint-count">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Mode:</span>
+                            <span class="info-value" id="connection-mode">-</span>
+                        </div>
+                    </div>
+
+                    <div class="robot-controls" style="display: none;">
+                        <div class="control-mode-section">
+                            <label class="section-label">Control Mode</label>
+                            <div class="mode-buttons">
+                                <button id="mode-position" class="mode-button active" data-mode="position">
+                                    <span class="mode-name">Position</span>
+                                </button>
+                                <button id="mode-gravity" class="mode-button" data-mode="gravity_comp">
+                                    <span class="mode-name">Gravity</span>
+                                </button>
+                                <button id="mode-impedance" class="mode-button" data-mode="impedance">
+                                    <span class="mode-name">Impedance</span>
+                                </button>
+                            </div>
+                            <div class="mode-description" id="mode-description">
+                                Direct joint position control via sliders
+                            </div>
+                        </div>
+
+                        <div class="control-grid">
+                            <button id="home-btn">Home</button>
+                            <button id="stop-btn" class="danger">Stop</button>
+                            <button id="set-zero-btn" class="warning" title="Set current position as zero reference">Set Zero</button>
+                        </div>
+
+                        <div class="velocity-control">
+                            <label>Velocity: <span id="velocity-value">0.5</span> rad/s</label>
+                            <input type="range" id="velocity-slider" min="0.1" max="2.0" step="0.1" value="0.5">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- End Effector Panel (Forward Kinematics) -->
+            <div id="floating-fk-panel" class="floating-panel">
+                <div class="floating-panel-header">
+                    <span>End Effector</span>
+                    <button class="panel-close-btn" data-panel="floating-fk-panel">×</button>
+                </div>
+                <div class="floating-panel-content">
+                    <div class="fk-display">
+                        <div class="fk-section">
+                            <div class="fk-section-title">Position (m)</div>
+                            <div class="fk-row">
+                                <span class="fk-label">X</span>
+                                <span class="fk-value" id="fk-pos-x">0.0000</span>
+                            </div>
+                            <div class="fk-row">
+                                <span class="fk-label">Y</span>
+                                <span class="fk-value" id="fk-pos-y">0.0000</span>
+                            </div>
+                            <div class="fk-row">
+                                <span class="fk-label">Z</span>
+                                <span class="fk-value" id="fk-pos-z">0.0000</span>
+                            </div>
+                        </div>
+                        <div class="fk-section">
+                            <div class="fk-section-title">Orientation (deg)</div>
+                            <div class="fk-row">
+                                <span class="fk-label">Roll</span>
+                                <span class="fk-value" id="fk-roll">0.00</span>
+                            </div>
+                            <div class="fk-row">
+                                <span class="fk-label">Pitch</span>
+                                <span class="fk-value" id="fk-pitch">0.00</span>
+                            </div>
+                            <div class="fk-row">
+                                <span class="fk-label">Yaw</span>
+                                <span class="fk-value" id="fk-yaw">0.00</span>
+                            </div>
+                        </div>
+                        <div class="fk-status">
+                            <span class="fk-status-dot disconnected"></span>
+                            <span class="fk-status-text">Not connected</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Waypoints Panel -->
+            <div id="floating-waypoints-panel" class="floating-panel" style="display: none;">
+                <div class="floating-panel-header">
+                    <span>Waypoints</span>
+                    <div class="waypoints-header-controls">
+                        <button id="clear-waypoints-btn" class="waypoint-header-btn" title="Clear All">Clear</button>
+                    </div>
+                    <button class="panel-close-btn" data-panel="floating-waypoints-panel">×</button>
+                </div>
+                <div class="floating-panel-content">
+                    <div class="waypoints-container">
+                        <!-- Waypoints will be dynamically added here -->
+                        <div id="waypoints-list" class="waypoints-list">
+                            <div class="waypoints-empty-state">No waypoints added</div>
+                        </div>
+
+                        <!-- Add waypoint button -->
+                        <div class="waypoints-add-section">
+                            <button id="add-waypoint-btn" class="waypoint-add-btn">
+                                <span class="waypoint-add-icon">+</span>
+                                <span>Add Current Position</span>
+                            </button>
+                        </div>
+
+                        <!-- Trajectory controls -->
+                        <div class="trajectory-controls">
+                            <div class="trajectory-progress-container" style="display: none;">
+                                <div class="trajectory-progress-bar">
+                                    <div class="trajectory-progress-fill" id="trajectory-progress-fill"></div>
+                                </div>
+                                <span class="trajectory-progress-text" id="trajectory-progress-text">0%</span>
+                            </div>
+                            <div class="trajectory-buttons">
+                                <button id="run-trajectory-btn" class="trajectory-run-btn" disabled>
+                                    Run Trajectory
+                                </button>
+                                <button id="stop-trajectory-btn" class="trajectory-stop-btn" style="display: none;">
+                                    Stop
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Waypoints status -->
+                        <div class="waypoints-status">
+                            <span class="waypoints-count" id="waypoints-count">0/6 waypoints</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Files Panel -->
+            <div id="floating-files-panel" class="floating-panel">
+                <div class="floating-panel-header">
+                    <span data-i18n="fileList">Files</span>
+                    <button class="panel-close-btn" data-panel="floating-files-panel">×</button>
+                </div>
+                <div class="floating-panel-content" id="model-list">
+                    <div class="empty-state" data-i18n="noFolder">Drop URDF files here to load</div>
+                </div>
+            </div>
+
+            <!-- Joints Panel -->
+            <div id="floating-joints-panel" class="floating-panel">
+                <div class="floating-panel-header">
+                    <span data-i18n="jointControl">Joint Controls</span>
+                    <div class="joints-panel-controls">
+                        <div id="unit-toggle">
+                            <button class="active" data-unit="rad">rad</button>
+                            <button data-unit="deg">deg</button>
+                        </div>
+                        <button id="reset-joints-btn" data-i18n="reset">Reset</button>
+                    </div>
+                    <button class="panel-close-btn" data-panel="floating-joints-panel">×</button>
+                </div>
+                <div class="floating-panel-content">
+                    <div id="joint-controls">
+                        <div class="empty-state" data-i18n="noModel">No model loaded</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Tree Panel -->
+            <div id="floating-model-tree" class="floating-panel" style="display: none;">
+                <div class="floating-panel-header">
+                    <span data-i18n="modelStructure">Model Structure</span>
+                    <button class="panel-close-btn" data-panel="floating-model-tree">×</button>
+                </div>
+                <div class="model-graph-content">
+                    <svg id="model-graph-svg">
+                        <defs>
+                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="var(--glass-border)"/>
+                            </marker>
+                        </defs>
+                    </svg>
+                    <div id="graph-empty-state">Load a model to see its structure</div>
+                </div>
+            </div>
+
+            <!-- Drop zone -->
+            <div id="drop-zone">
+                <div id="drop-text">
+                    <strong>Drop files here</strong>
+                    Supported: URDF, MJCF (XML), STL, DAE, OBJ
+                </div>
+            </div>
+
+            <!-- Hover info -->
+            <div id="hover-info">
+                <div id="hover-link-name"></div>
+                <div id="hover-joint-name"></div>
+                <div id="hover-link-mass"></div>
+                <div id="hover-link-pose"></div>
+            </div>
+
+            <!-- Status info -->
+            <div id="status-info">
+                <strong>Digital Twin</strong><br>
+                Drop a URDF file or connect to a robot
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>

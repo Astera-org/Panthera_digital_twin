@@ -1,0 +1,28 @@
+robot:
+  name: "Panthera-Xlerobot"
+  param_file: "../robot_param/motor_param/6dof_Xlb_params.yaml"
+  joint_limits:
+    lower: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14]
+    upper: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+
+urdf:
+  # file_path: "../arm_description/urdf/arm_description.urdf"
+  file_path: "../arm_description/urdf/xrb.urdf"
+  # file_path: "../arm_description/urdf/arm_description_v2.urdf"
+  base_link: "base_link"
+  end_effector_link: "joint6"
+
+kinematics:
+  joint_names:
+    - "Joint_1"
+    - "Joint_2"
+    - "Joint_3"
+    - "Joint_4"
+    - "Joint_5"
+    - "Joint_6"
+
+control:
+  default_velocity: 0.5
+  default_max_torque: 10.0
+  position_tolerance: 0.01
+  timeout: 10.0
