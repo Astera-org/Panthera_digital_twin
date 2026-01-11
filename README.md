@@ -2,6 +2,8 @@
 
 A real-time digital twin interface that combines 3D URDF visualization with live robot connection and control for Panthera robotic arm.
 
+![Panthera_test](https://github.com/user-attachments/assets/efe430dd-d56a-4751-a395-62b3c6650f50)
+
 **Supported Control Modes:** Position | Gravity Compensation | Impedance (PD + Gravity)
 
 ## Architecture
@@ -194,4 +196,5 @@ tau_limit = [10.0, 10.0, 10.0, 10.0, 10.0, 3.7]
 impedance_K = [5.0, 5.0, 5.0, 5.0, 5.0, 1.0]  # Stiffness
 impedance_B = [0.5, 0.5, 0.5, 0.5, 0.5, 0.1]  # Damping
 ```
+
 
