@@ -9,7 +9,7 @@ A real-time digital twin interface that combines 3D URDF visualization with live
 ## Architecture
 
 Frontend adapted from: https://github.com/fan-ziqi/robot_viewer
-Backend requires Pantera SDK: https://github.com/HighTorque-Robotics
+Backend requires Panthera SDK: https://github.com/HighTorque-Robotics
 
 ```
 Panthera_digital_twin/
@@ -199,6 +199,7 @@ tau_limit = [10.0, 10.0, 10.0, 10.0, 10.0, 3.7]
 impedance_K = [5.0, 5.0, 5.0, 5.0, 5.0, 1.0]  # Stiffness
 impedance_B = [0.5, 0.5, 0.5, 0.5, 0.5, 0.1]  # Damping
 ```
+
 
 
 
