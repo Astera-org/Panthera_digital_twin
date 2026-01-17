@@ -264,6 +264,7 @@ export class PanelManager {
         this.registerPanel('floating-help-panel');
         this.registerPanel('floating-fk-panel');
         this.registerPanel('floating-waypoints-panel');
+        this.registerPanel('floating-camera-panel');
         this.registerPanel('code-editor-panel', '.code-editor-header');
 
         // Setup all maximize buttons (common functionality)

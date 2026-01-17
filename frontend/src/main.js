@@ -15,6 +15,7 @@ import { MeasurementController } from './controllers/MeasurementController.js';
 import { i18n } from './utils/i18n.js';
 import { RobotConnection, robotConnection } from './robot/RobotConnection.js';
 import { ConnectionUI } from './ui/ConnectionUI.js';
+import { CameraConnection } from './camera/CameraConnection.js';
 
 // Expose d3 globally for PanelManager
 window.d3 = d3;
@@ -40,6 +41,10 @@ class DigitalTwinApp {
         this.isConnectedMode = false;
         this.endEffectorOffset = 0.07;  // Default offset from Link_6 origin to actual tool tip (meters)
         this.endEffectorMarker = null;  // Red dot showing actual end effector position
+
+        // Camera streaming
+        this.cameraConnection = new CameraConnection();
+        this.cameraStreaming = false;
     }
 
     async init() {
@@ -157,6 +162,9 @@ class DigitalTwinApp {
 
             // Setup Waypoints panel
             this.setupWaypointsPanel();
+
+            // Setup Camera panel
+            this.setupCameraPanel();
 
             // Start render loop
             this.animate();
@@ -1480,6 +1488,420 @@ class DigitalTwinApp {
 
         // Update waypoint glow effects based on proximity
         this.updateWaypointGlowEffects(position);
+    }
+
+    /**
+     * Setup Camera panel and image streaming
+     */
+    setupCameraPanel() {
+        const toggleBtn = document.getElementById('toggle-camera-panel');
+        const cameraPanel = document.getElementById('floating-camera-panel');
+        const startBtn = document.getElementById('camera-start-btn');
+        const stopBtn = document.getElementById('camera-stop-btn');
+        const statusIndicator = document.getElementById('camera-status-indicator');
+        const statusText = document.getElementById('camera-status-text');
+        const statsContainer = document.getElementById('camera-stats');
+        const fpsEl = document.getElementById('camera-fps');
+        const latencyEl = document.getElementById('camera-latency');
+        const cameraImage = document.getElementById('camera-image');
+        const cameraPlaceholder = document.getElementById('camera-placeholder');
+        const monoBtn = document.getElementById('camera-mode-mono');
+        const depthBtn = document.getElementById('camera-mode-depth');
+        const selectBtn = document.getElementById('camera-mode-select');
+        const videoContainer = document.getElementById('camera-video-container');
+        const selectionBox = document.getElementById('camera-selection-box');
+        const xyzDisplay = document.getElementById('camera-xyz-display');
+        const xyzX = document.getElementById('camera-xyz-x');
+        const xyzY = document.getElementById('camera-xyz-y');
+        const xyzZ = document.getElementById('camera-xyz-z');
+
+        // Selection mode state
+        let selectMode = false;
+        let isSelecting = false;
+        let selectionStart = null;
+
+        // Panel toggle functionality
+        if (toggleBtn && cameraPanel) {
+            toggleBtn.addEventListener('click', () => {
+                const isVisible = cameraPanel.style.display !== 'none';
+                cameraPanel.style.display = isVisible ? 'none' : 'block';
+                toggleBtn.classList.toggle('active', !isVisible);
+            });
+
+            // Close button
+            const closeBtn = cameraPanel.querySelector('.panel-close-btn');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                    cameraPanel.style.display = 'none';
+                    toggleBtn.classList.remove('active');
+                });
+            }
+        }
+
+        // Camera frame callback - display image
+        this.cameraConnection.onFrame = (data) => {
+            // Update image display
+            if (cameraImage && data.image) {
+                cameraImage.src = `data:image/jpeg;base64,${data.image}`;
+                cameraImage.style.display = 'block';
+                if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
+            }
+
+            // Update stats display
+            if (fpsEl) fpsEl.textContent = Math.round(data.fps);
+            if (latencyEl) latencyEl.textContent = Math.round(data.latency_ms);
+        };
+
+        this.cameraConnection.onStatusChange = (streaming, config, message) => {
+            this.cameraStreaming = streaming;
+
+            // Update UI
+            if (statusIndicator) {
+                statusIndicator.classList.toggle('streaming', streaming);
+            }
+            if (statusText) {
+                statusText.textContent = streaming ? 'Streaming' : (message || 'Not streaming');
+            }
+            if (statsContainer) {
+                statsContainer.style.display = streaming ? 'flex' : 'none';
+            }
+            if (startBtn) {
+                startBtn.style.display = streaming ? 'none' : 'block';
+            }
+            if (stopBtn) {
+                stopBtn.style.display = streaming ? 'block' : 'none';
+            }
+
+            // Show/hide image vs placeholder
+            if (!streaming) {
+                if (cameraImage) cameraImage.style.display = 'none';
+                if (cameraPlaceholder) cameraPlaceholder.style.display = 'flex';
+            }
+
+            console.log(`[DigitalTwin] Camera ${streaming ? 'started' : 'stopped'}: ${message}`);
+        };
+
+        // Start button click
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                if (this.robotConnection && this.robotConnection.socket) {
+                    this.cameraConnection.startCamera({
+                        resolution: [640, 400],
+                        fps: 60  // 60fps for smooth video
+                    });
+                } else {
+                    console.warn('[DigitalTwin] Cannot start camera: not connected to backend');
+                    if (statusText) statusText.textContent = 'Connect to backend first';
+                }
+            });
+        }
+
+        // Stop button click
+        if (stopBtn) {
+            stopBtn.addEventListener('click', () => {
+                this.cameraConnection.stopCamera();
+            });
+        }
+
+        // Mode button click handlers
+        const updateModeButtons = (mode) => {
+            if (monoBtn) monoBtn.classList.toggle('active', mode === 'mono');
+            if (depthBtn) depthBtn.classList.toggle('active', mode === 'depth');
+        };
+
+        if (monoBtn) {
+            monoBtn.addEventListener('click', () => {
+                this.cameraConnection.setMode('mono');
+                updateModeButtons('mono');
+            });
+        }
+
+        if (depthBtn) {
+            depthBtn.addEventListener('click', () => {
+                this.cameraConnection.setMode('depth');
+                updateModeButtons('depth');
+            });
+        }
+
+        // Mode change callback (from other clients)
+        this.cameraConnection.onModeChange = (mode) => {
+            updateModeButtons(mode);
+        };
+
+        // Select button - toggle selection mode
+        if (selectBtn) {
+            selectBtn.addEventListener('click', () => {
+                selectMode = !selectMode;
+                selectBtn.classList.toggle('active', selectMode);
+                if (videoContainer) {
+                    videoContainer.classList.toggle('selecting', selectMode);
+                }
+                // Show/hide XYZ display
+                if (xyzDisplay) {
+                    xyzDisplay.style.display = selectMode ? 'flex' : 'none';
+                }
+                // Clear circle when exiting select mode
+                if (!selectMode && videoContainer && videoContainer._clearCircle) {
+                    videoContainer._clearCircle();
+                }
+            });
+        }
+
+        // Persistent circle state (in image coordinates)
+        let circleCenter = null;  // {x, y} in image coords
+        let circleRadius = 0;     // in image coords
+        let dragMode = null;      // 'draw', 'move', 'resize', or null
+
+        // Mouse event handlers for circle selection with reposition/resize support
+        if (videoContainer) {
+            const getImageCoordinates = (e) => {
+                // Get the image element's bounding rect (or container if image not visible)
+                const img = cameraImage && cameraImage.style.display !== 'none' ? cameraImage : videoContainer;
+                const rect = img.getBoundingClientRect();
+                const scaleX = 640 / rect.width;  // Image native width
+                const scaleY = 400 / rect.height; // Image native height
+                return {
+                    x: Math.max(0, Math.min(640, (e.clientX - rect.left) * scaleX)),
+                    y: Math.max(0, Math.min(400, (e.clientY - rect.top) * scaleY)),
+                    displayX: e.clientX - rect.left,
+                    displayY: e.clientY - rect.top,
+                    scaleX: scaleX,
+                    scaleY: scaleY,
+                    rect: rect
+                };
+            };
+
+            const updateCircleDisplay = (center, radius, coords) => {
+                if (!selectionBox || !center) return;
+                // Convert image coords to display coords
+                const displayX = center.x / coords.scaleX;
+                const displayY = center.y / coords.scaleY;
+                const displayRadius = radius / coords.scaleX;  // Assume uniform scale
+                const diameter = displayRadius * 2;
+
+                selectionBox.style.left = displayX + 'px';
+                selectionBox.style.top = displayY + 'px';
+                selectionBox.style.width = diameter + 'px';
+                selectionBox.style.height = diameter + 'px';
+                selectionBox.style.display = 'block';
+            };
+
+            const queryDepthForCircle = () => {
+                if (!circleCenter || circleRadius < 2) return;
+                const box = [
+                    Math.max(0, circleCenter.x - circleRadius),
+                    Math.max(0, circleCenter.y - circleRadius),
+                    Math.min(640, circleCenter.x + circleRadius),
+                    Math.min(400, circleCenter.y + circleRadius)
+                ];
+                console.log('[DigitalTwin] Querying depth at circle center:',
+                    [circleCenter.x, circleCenter.y], 'radius:', circleRadius, 'box:', box);
+                this.cameraConnection.queryDepth(box);
+            };
+
+            const EDGE_THRESHOLD = 8;  // pixels - how close to edge to trigger resize
+
+            // Update cursor based on hover position (called when not dragging)
+            const updateCursor = (coords) => {
+                if (!circleCenter || circleRadius <= 0) {
+                    videoContainer.style.cursor = 'crosshair';
+                    return;
+                }
+
+                const distToCenter = Math.sqrt(
+                    Math.pow(coords.x - circleCenter.x, 2) +
+                    Math.pow(coords.y - circleCenter.y, 2)
+                );
+                const distToEdge = Math.abs(distToCenter - circleRadius);
+                const edgeThresholdImg = EDGE_THRESHOLD * coords.scaleX;
+
+                if (distToEdge < edgeThresholdImg) {
+                    videoContainer.style.cursor = 'nwse-resize';  // Resize cursor
+                } else if (distToCenter < circleRadius) {
+                    videoContainer.style.cursor = 'move';  // Move cursor
+                } else {
+                    videoContainer.style.cursor = 'crosshair';  // Draw new
+                }
+            };
+
+            videoContainer.addEventListener('mousedown', (e) => {
+                if (!selectMode) return;
+                e.preventDefault();
+
+                const coords = getImageCoordinates(e);
+                isSelecting = true;
+
+                // Check if clicking on existing circle
+                if (circleCenter && circleRadius > 0) {
+                    const distToCenter = Math.sqrt(
+                        Math.pow(coords.x - circleCenter.x, 2) +
+                        Math.pow(coords.y - circleCenter.y, 2)
+                    );
+                    const distToEdge = Math.abs(distToCenter - circleRadius);
+                    const edgeThresholdImg = EDGE_THRESHOLD * coords.scaleX;
+
+                    if (distToEdge < edgeThresholdImg) {
+                        // Click near edge - resize mode
+                        dragMode = 'resize';
+                        selectionStart = coords;
+                    } else if (distToCenter < circleRadius) {
+                        // Click inside circle - move mode
+                        dragMode = 'move';
+                        selectionStart = coords;
+                    } else {
+                        // Click outside circle - draw new circle
+                        dragMode = 'draw';
+                        circleCenter = { x: coords.x, y: coords.y };
+                        circleRadius = 0;
+                        selectionStart = coords;
+                        updateCircleDisplay(circleCenter, circleRadius, coords);
+                    }
+                } else {
+                    // No existing circle - draw new one
+                    dragMode = 'draw';
+                    circleCenter = { x: coords.x, y: coords.y };
+                    circleRadius = 0;
+                    selectionStart = coords;
+                    updateCircleDisplay(circleCenter, circleRadius, coords);
+                }
+            });
+
+            videoContainer.addEventListener('mousemove', (e) => {
+                if (!selectMode) return;
+
+                const coords = getImageCoordinates(e);
+
+                // If not dragging, just update cursor
+                if (!isSelecting || !selectionStart || !dragMode) {
+                    updateCursor(coords);
+                    return;
+                }
+
+                if (dragMode === 'draw') {
+                    // Drawing new circle - radius is distance from center
+                    const dx = coords.x - circleCenter.x;
+                    const dy = coords.y - circleCenter.y;
+                    circleRadius = Math.sqrt(dx * dx + dy * dy);
+                } else if (dragMode === 'move') {
+                    // Moving circle - update center based on drag delta
+                    const dx = coords.x - selectionStart.x;
+                    const dy = coords.y - selectionStart.y;
+                    circleCenter.x = Math.max(circleRadius, Math.min(640 - circleRadius, circleCenter.x + dx));
+                    circleCenter.y = Math.max(circleRadius, Math.min(400 - circleRadius, circleCenter.y + dy));
+                    selectionStart = coords;  // Update for next delta
+                } else if (dragMode === 'resize') {
+                    // Resizing - radius is distance from center to mouse
+                    const dx = coords.x - circleCenter.x;
+                    const dy = coords.y - circleCenter.y;
+                    circleRadius = Math.max(2, Math.sqrt(dx * dx + dy * dy));  // Min radius of 2
+                }
+
+                updateCircleDisplay(circleCenter, circleRadius, coords);
+            });
+
+            videoContainer.addEventListener('mouseup', (e) => {
+                if (!isSelecting) return;
+
+                isSelecting = false;
+                const coords = getImageCoordinates(e);
+
+                // Finalize based on mode
+                if (dragMode === 'draw') {
+                    const dx = coords.x - circleCenter.x;
+                    const dy = coords.y - circleCenter.y;
+                    circleRadius = Math.sqrt(dx * dx + dy * dy);
+                }
+
+                // Query depth if circle is valid (very small threshold - 2 pixels)
+                if (circleRadius >= 2) {
+                    updateCircleDisplay(circleCenter, circleRadius, coords);
+                    queryDepthForCircle();
+                } else {
+                    // Too small - clear circle
+                    circleCenter = null;
+                    circleRadius = 0;
+                    if (selectionBox) selectionBox.style.display = 'none';
+                }
+
+                dragMode = null;
+                selectionStart = null;
+            });
+
+            // Don't cancel on mouse leave - keep circle visible
+            videoContainer.addEventListener('mouseleave', () => {
+                if (isSelecting) {
+                    isSelecting = false;
+                    dragMode = null;
+                    selectionStart = null;
+                    // Keep circle displayed if it exists
+                }
+            });
+
+            // Clear circle when exiting select mode
+            const clearCircle = () => {
+                circleCenter = null;
+                circleRadius = 0;
+                if (selectionBox) selectionBox.style.display = 'none';
+            };
+
+            // Store clearCircle for use in select button handler
+            videoContainer._clearCircle = clearCircle;
+        }
+
+        // Depth response callback
+        this.cameraConnection.onDepthResponse = (data) => {
+            console.log('[DigitalTwin] Depth response:', data);
+            if (data.success && data.position) {
+                const pos = data.position;
+                if (xyzX) xyzX.textContent = `X: ${pos.x.toFixed(3)}`;
+                if (xyzY) xyzY.textContent = `Y: ${pos.y.toFixed(3)}`;
+                if (xyzZ) xyzZ.textContent = `Z: ${pos.z.toFixed(3)}`;
+            } else {
+                if (xyzX) xyzX.textContent = 'X: err';
+                if (xyzY) xyzY.textContent = 'Y: err';
+                if (xyzZ) xyzZ.textContent = `Z: err`;
+                console.warn('[DigitalTwin] Depth query failed:', data.error);
+            }
+        };
+
+        // Attach camera connection to socket when robot connects
+        const originalOnConnect = this.connectionUI?.onConnect;
+        if (this.connectionUI) {
+            const self = this;
+            this.connectionUI.onConnect = (config) => {
+                // Call original handler
+                if (originalOnConnect) {
+                    originalOnConnect.call(this.connectionUI, config);
+                }
+                // Attach camera to socket
+                if (self.robotConnection && self.robotConnection.socket) {
+                    self.cameraConnection.attachSocket(self.robotConnection.socket);
+                }
+            };
+        }
+
+        // Detach camera when disconnected
+        const originalOnDisconnect = this.connectionUI?.onDisconnect;
+        if (this.connectionUI) {
+            const self = this;
+            this.connectionUI.onDisconnect = () => {
+                if (originalOnDisconnect) {
+                    originalOnDisconnect.call(this.connectionUI);
+                }
+                self.cameraConnection.detachSocket();
+                self.cameraStreaming = false;
+                // Update UI to stopped state
+                if (statusIndicator) statusIndicator.classList.remove('streaming');
+                if (statusText) statusText.textContent = 'Not streaming';
+                if (statsContainer) statsContainer.style.display = 'none';
+                if (startBtn) startBtn.style.display = 'block';
+                if (stopBtn) stopBtn.style.display = 'none';
+                if (cameraImage) cameraImage.style.display = 'none';
+                if (cameraPlaceholder) cameraPlaceholder.style.display = 'flex';
+            };
+        }
+
+        console.log('[DigitalTwin] Camera panel initialized');
     }
 
     /**

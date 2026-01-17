@@ -613,6 +613,193 @@
             height: 280px;
         }
 
+        /* Camera panel */
+        #floating-camera-panel {
+            top: 60px;
+            right: 20px;
+            left: auto;
+            width: 360px;
+        }
+
+        .camera-video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+
+        .camera-video-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .camera-video-placeholder {
+            width: 100%;
+            aspect-ratio: 640/400;
+            background: rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-tertiary);
+            font-size: 12px;
+        }
+
+        .camera-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .camera-mode-toggle {
+            display: flex;
+            gap: 8px;
+        }
+
+        .camera-mode-btn {
+            flex: 1;
+            padding: 6px 12px;
+            border: 1px solid var(--glass-border);
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .camera-mode-btn:hover {
+            background: var(--accent-secondary);
+            border-color: var(--accent);
+        }
+
+        .camera-mode-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .camera-selection-box {
+            position: absolute;
+            border: 2px solid #00ff00;
+            background: rgba(0, 255, 0, 0.1);
+            pointer-events: none;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .camera-video-container.selecting {
+            cursor: crosshair;
+        }
+
+        .camera-xyz-display {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .camera-xyz-label {
+            color: var(--text-tertiary);
+        }
+
+        .camera-xyz-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .camera-status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .camera-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .camera-status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-tertiary);
+            transition: background 0.3s ease;
+        }
+
+        .camera-status-indicator.streaming {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .camera-status-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .camera-stats {
+            display: flex;
+            gap: 16px;
+        }
+
+        .camera-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .camera-stat-value {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .camera-stat-label {
+            font-size: 10px;
+            color: var(--text-tertiary);
+        }
+
+        .camera-btn {
+            width: 100%;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .camera-start-btn {
+            background: var(--accent);
+            color: white;
+        }
+
+        .camera-start-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .camera-stop-btn {
+            background: var(--danger);
+            color: white;
+        }
+
+        .camera-stop-btn:hover {
+            opacity: 0.9;
+        }
+
+        .camera-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         /* FK (End Effector) panel */
         #floating-fk-panel {
             top: 80px;
@@ -1397,6 +1584,9 @@
                     <button class="tool-button" id="toggle-waypoints-panel">
                         <span>Waypoints</span>
                     </button>
+                    <button class="tool-button" id="toggle-camera-panel">
+                        <span>Camera</span>
+                    </button>
                 </div>
 
                 <div class="control-bar-divider"></div>
@@ -1586,6 +1776,63 @@
                 </div>
                 <div class="floating-panel-content" id="model-list">
                     <div class="empty-state" data-i18n="noFolder">Drop URDF files here to load</div>
+                </div>
+            </div>
+
+            <!-- Camera Panel -->
+            <div id="floating-camera-panel" class="floating-panel" style="display: none;">
+                <div class="floating-panel-header">
+                    <span>Camera</span>
+                    <button class="panel-close-btn" data-panel="floating-camera-panel">×</button>
+                </div>
+                <div class="floating-panel-content">
+                    <div class="camera-controls">
+                        <!-- Video display area -->
+                        <div class="camera-video-container" id="camera-video-container">
+                            <div class="camera-video-placeholder" id="camera-placeholder">
+                                Click Start to stream
+                            </div>
+                            <img id="camera-image" style="display: none;" alt="Camera feed">
+                            <div class="camera-selection-box" id="camera-selection-box" style="display: none;"></div>
+                        </div>
+                        <!-- Mode toggle buttons -->
+                        <div class="camera-mode-toggle">
+                            <button id="camera-mode-mono" class="camera-mode-btn active">Mono</button>
+                            <button id="camera-mode-depth" class="camera-mode-btn">Depth</button>
+                            <button id="camera-mode-select" class="camera-mode-btn">Select</button>
+                        </div>
+                        <!-- XYZ Position display -->
+                        <div class="camera-xyz-display" id="camera-xyz-display" style="display: none;">
+                            <span class="camera-xyz-label">Position (m):</span>
+                            <span class="camera-xyz-value" id="camera-xyz-x">X: --</span>
+                            <span class="camera-xyz-value" id="camera-xyz-y">Y: --</span>
+                            <span class="camera-xyz-value" id="camera-xyz-z">Z: --</span>
+                        </div>
+                        <!-- Status bar with stats -->
+                        <div class="camera-status-bar">
+                            <div class="camera-status">
+                                <div class="camera-status-indicator" id="camera-status-indicator"></div>
+                                <span class="camera-status-text" id="camera-status-text">Not streaming</span>
+                            </div>
+                            <div class="camera-stats" id="camera-stats" style="display: none;">
+                                <div class="camera-stat">
+                                    <span class="camera-stat-value" id="camera-fps">0</span>
+                                    <span class="camera-stat-label">fps</span>
+                                </div>
+                                <div class="camera-stat">
+                                    <span class="camera-stat-value" id="camera-latency">0</span>
+                                    <span class="camera-stat-label">ms</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Control buttons -->
+                        <button id="camera-start-btn" class="camera-btn camera-start-btn">
+                            Start Camera
+                        </button>
+                        <button id="camera-stop-btn" class="camera-btn camera-stop-btn" style="display: none;">
+                            Stop Camera
+                        </button>
+                    </div>
                 </div>
             </div>
 

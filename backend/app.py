@@ -16,9 +16,13 @@ import logging
 import argparse
 import yaml
 import numpy as np
+import base64
 from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
+
+# Import camera streamer
+from camera import CameraStreamer
 
 # Disable Flask's request logging
 log = logging.getLogger('werkzeug')
@@ -93,6 +97,11 @@ MAX_WAYPOINTS = 6
 waypoints = []
 trajectory_running = False
 trajectory_progress = 0.0
+
+# ============== CAMERA SETTINGS ==============
+camera_streamer = None
+camera_streaming = False
+CAMERA_BROADCAST_FREQ = 60  # Hz - image stream frequency
 
 
 def rotation_matrix_to_euler(R):
@@ -1202,6 +1211,229 @@ def handle_go_to_waypoint(data):
 
     with target_lock:
         target_positions[:] = positions
+
+
+# ============== Camera WebSocket Events ==============
+
+def camera_broadcast_loop():
+    """Broadcast camera image (mono or depth) to connected clients."""
+    global camera_streaming
+    import cv2
+
+    dt = 1.0 / CAMERA_BROADCAST_FREQ
+
+    while camera_streaming and camera_streamer is not None:
+        loop_start = time.time()
+
+        try:
+            data = camera_streamer.get_latest_data()
+
+            if data['image'] is not None:
+                image = data['image']
+
+                # Encode as JPEG for efficient transmission
+                _, jpeg_buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                jpeg_base64 = base64.b64encode(jpeg_buffer).decode('utf-8')
+
+                # Emit image data
+                emit_data = {
+                    'image': jpeg_base64,
+                    'width': image.shape[1],
+                    'height': image.shape[0],
+                    'mode': data['mode'],
+                    'fps': data['fps'],
+                    'latency_ms': data['latency_ms'],
+                    'frame_count': data['frame_count']
+                }
+
+                socketio.emit('camera_frame', emit_data)
+
+        except Exception as e:
+            print(f"Camera broadcast error: {e}")
+
+        # Maintain target frequency
+        elapsed = time.time() - loop_start
+        sleep_time = dt - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+
+@socketio.on('camera_start')
+def handle_camera_start(data=None):
+    """Start camera streaming."""
+    global camera_streaming, camera_streamer
+
+    if camera_streaming:
+        emit('camera_status', {'streaming': True, 'message': 'Already streaming'})
+        return
+
+    # Initialize camera if needed
+    if camera_streamer is None:
+        resolution = data.get('resolution', (640, 400)) if data else (640, 400)
+        fps = data.get('fps', 60) if data else 60  # Default 60fps for smooth video
+        downsample = data.get('downsample', 1) if data else 1
+        camera_streamer = CameraStreamer(
+            resolution=tuple(resolution),
+            fps=fps,
+            downsample=downsample
+        )
+
+    # Start the camera
+    if camera_streamer.start():
+        camera_streaming = True
+
+        # Start broadcast loop in separate thread
+        broadcast_thread = threading.Thread(
+            target=camera_broadcast_loop,
+            daemon=True
+        )
+        broadcast_thread.start()
+
+        emit('camera_status', {
+            'streaming': True,
+            'config': camera_streamer.get_config(),
+            'message': 'Camera started'
+        })
+        socketio.emit('camera_started', camera_streamer.get_config())
+    else:
+        emit('camera_status', {'streaming': False, 'error': 'Failed to start camera'})
+
+
+@socketio.on('camera_stop')
+def handle_camera_stop():
+    """Stop camera streaming."""
+    global camera_streaming
+
+    camera_streaming = False
+    if camera_streamer:
+        camera_streamer.stop()
+
+    emit('camera_status', {'streaming': False, 'message': 'Camera stopped'})
+    socketio.emit('camera_stopped', {})
+
+
+@socketio.on('camera_config')
+def handle_camera_config():
+    """Get camera configuration."""
+    if camera_streamer:
+        emit('camera_config_response', camera_streamer.get_config())
+    else:
+        emit('camera_config_response', {
+            'available': False,
+            'streaming': False
+        })
+
+
+@socketio.on('camera_mode')
+def handle_camera_mode(data):
+    """Set camera streaming mode (mono or depth)."""
+    if not camera_streamer:
+        emit('camera_mode_response', {'success': False, 'error': 'Camera not initialized'})
+        return
+
+    mode = data.get('mode', 'mono')
+    if camera_streamer.set_mode(mode):
+        emit('camera_mode_response', {'success': True, 'mode': mode})
+        socketio.emit('camera_mode_changed', {'mode': mode})
+    else:
+        emit('camera_mode_response', {'success': False, 'error': f'Invalid mode: {mode}'})
+
+
+@socketio.on('camera_depth_query')
+def handle_camera_depth_query(data):
+    """Query depth at a selected region and return 3D position."""
+    if not camera_streamer:
+        emit('camera_depth_response', {'success': False, 'error': 'Camera not initialized'})
+        return
+
+    box = data.get('box')  # [x1, y1, x2, y2]
+    if not box or len(box) != 4:
+        emit('camera_depth_response', {'success': False, 'error': 'Invalid box coordinates'})
+        return
+
+    result = camera_streamer.get_depth_at_region(box)
+    if result:
+        emit('camera_depth_response', {
+            'success': True,
+            'position': {
+                'x': result['x'],
+                'y': result['y'],
+                'z': result['z']
+            },
+            'depth_range': {
+                'min': result['min_depth'],
+                'max': result['max_depth'],
+                'median': result['median_depth']
+            },
+            'box': result['box']
+        })
+    else:
+        emit('camera_depth_response', {'success': False, 'error': 'Could not compute depth (no valid disparity in region)'})
+
+
+# ============== Camera REST API ==============
+
+@app.route('/api/camera/status', methods=['GET'])
+def camera_status():
+    """Get camera status."""
+    if camera_streamer:
+        return jsonify({
+            'streaming': camera_streaming,
+            'config': camera_streamer.get_config()
+        })
+    return jsonify({
+        'streaming': False,
+        'available': False
+    })
+
+
+@app.route('/api/camera/start', methods=['POST'])
+def camera_start():
+    """Start camera via REST API."""
+    global camera_streaming, camera_streamer
+
+    if camera_streaming:
+        return jsonify({'success': True, 'message': 'Already streaming'})
+
+    data = request.json or {}
+    resolution = data.get('resolution', (640, 400))
+    fps = data.get('fps', 60)
+    downsample = data.get('downsample', 1)
+
+    if camera_streamer is None:
+        camera_streamer = CameraStreamer(
+            resolution=tuple(resolution),
+            fps=fps,
+            downsample=downsample
+        )
+
+    if camera_streamer.start():
+        camera_streaming = True
+
+        broadcast_thread = threading.Thread(
+            target=camera_broadcast_loop,
+            daemon=True
+        )
+        broadcast_thread.start()
+
+        return jsonify({
+            'success': True,
+            'config': camera_streamer.get_config()
+        })
+
+    return jsonify({'success': False, 'error': 'Failed to start camera'})
+
+
+@app.route('/api/camera/stop', methods=['POST'])
+def camera_stop():
+    """Stop camera via REST API."""
+    global camera_streaming
+
+    camera_streaming = False
+    if camera_streamer:
+        camera_streamer.stop()
+
+    return jsonify({'success': True})
 
 
 # ============== Main ==============
