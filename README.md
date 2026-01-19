@@ -15,6 +15,9 @@ Backend requires Panthera SDK: https://github.com/HighTorque-Robotics
 Panthera_digital_twin/
 ├── backend/
 │   ├── app.py              # Flask + WebSocket server
+│   ├── camera/
+│   │   ├── camera_streamer.py  # OAK-D stereo depth streaming
+│   │   └── cam2bot.yaml        # Camera-to-robot transform
 │   └── requirements.txt    # Python dependencies
 ├── frontend/
 │   ├── src/
@@ -23,12 +26,17 @@ Panthera_digital_twin/
 │   │   │   └── RobotConnection.js  # WebSocket client
 │   │   ├── ui/
 │   │   │   ├── ConnectionUI.js     # Connection panel
-│   │   │   └── JointControlsUI.js  # Joint sliders
+│   │   │   ├── JointControlsUI.js  # Joint sliders & robot sync
+│   │   │   ├── PanelManager.js     # Panel drag & resize
+│   │   │   └── UIController.js     # Visualization & toolbar buttons
 │   │   ├── renderer/       # Three.js scene management
 │   │   └── adapters/       # URDF/MJCF parsing
 │   ├── index.html          # Main HTML page
 │   ├── package.json        # Node.js dependencies
 │   └── vite.config.js      # Build configuration
+├── calibration/
+│   ├── calibrate_hand_eye.py   # Compute camera-to-robot transform
+│   └── README.md               # Calibration instructions
 ├── robot_param/
 │   └── xlb.yaml            # Robot configuration
 ├── arm_description/        # URDF and mesh files
