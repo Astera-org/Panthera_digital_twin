@@ -259,6 +259,8 @@ class DigitalTwinApp {
             // Update FK display (always, when connected)
             if (state.forward_kinematics) {
                 this.updateFKDisplay(state.forward_kinematics);
+                // Also update ROB position in calibration display
+                this.updateCalibrationRobPosition(state.forward_kinematics);
             }
         };
 
@@ -528,6 +530,21 @@ class DigitalTwinApp {
             if (pitch) pitch.textContent = fk.euler[1].toFixed(2);
             if (yaw) yaw.textContent = fk.euler[2].toFixed(2);
         }
+    }
+
+    /**
+     * Update ROB position in calibration display
+     */
+    updateCalibrationRobPosition(fk) {
+        if (!fk || !fk.position) return;
+
+        const robPosX = document.getElementById('rob-pos-x');
+        const robPosY = document.getElementById('rob-pos-y');
+        const robPosZ = document.getElementById('rob-pos-z');
+
+        if (robPosX) robPosX.textContent = `X: ${fk.position[0].toFixed(3)}`;
+        if (robPosY) robPosY.textContent = `Y: ${fk.position[1].toFixed(3)}`;
+        if (robPosZ) robPosZ.textContent = `Z: ${fk.position[2].toFixed(3)}`;
     }
 
     /**
@@ -1486,8 +1503,25 @@ class DigitalTwinApp {
         // Update marker position
         this.endEffectorMarker.position.copy(position);
 
+        // Update FK position display to match the red point exactly
+        this.updateFKPositionFromMarker(position);
+
         // Update waypoint glow effects based on proximity
         this.updateWaypointGlowEffects(position);
+    }
+
+    /**
+     * Update FK position display from the end effector marker position
+     * This ensures the displayed position matches the red point exactly
+     */
+    updateFKPositionFromMarker(position) {
+        const posX = document.getElementById('fk-pos-x');
+        const posY = document.getElementById('fk-pos-y');
+        const posZ = document.getElementById('fk-pos-z');
+
+        if (posX) posX.textContent = position.x.toFixed(4);
+        if (posY) posY.textContent = position.y.toFixed(4);
+        if (posZ) posZ.textContent = position.z.toFixed(4);
     }
 
     /**
@@ -1510,10 +1544,18 @@ class DigitalTwinApp {
         const selectBtn = document.getElementById('camera-mode-select');
         const videoContainer = document.getElementById('camera-video-container');
         const selectionBox = document.getElementById('camera-selection-box');
-        const xyzDisplay = document.getElementById('camera-xyz-display');
-        const xyzX = document.getElementById('camera-xyz-x');
-        const xyzY = document.getElementById('camera-xyz-y');
-        const xyzZ = document.getElementById('camera-xyz-z');
+        // Calibration display elements
+        const calibrationDisplay = document.getElementById('camera-calibration-display');
+        const camPosX = document.getElementById('cam-pos-x');
+        const camPosY = document.getElementById('cam-pos-y');
+        const camPosZ = document.getElementById('cam-pos-z');
+        const robPosX = document.getElementById('rob-pos-x');
+        const robPosY = document.getElementById('rob-pos-y');
+        const robPosZ = document.getElementById('rob-pos-z');
+        const calibrationRecordBtn = document.getElementById('calibration-record-btn');
+        const calibrationSaveBtn = document.getElementById('calibration-save-btn');
+        const calibrationClearBtn = document.getElementById('calibration-clear-btn');
+        const calibrationPairsList = document.getElementById('calibration-pairs-list');
 
         // Selection mode state
         let selectMode = false;
@@ -1636,13 +1678,69 @@ class DigitalTwinApp {
                 if (videoContainer) {
                     videoContainer.classList.toggle('selecting', selectMode);
                 }
-                // Show/hide XYZ display
-                if (xyzDisplay) {
-                    xyzDisplay.style.display = selectMode ? 'flex' : 'none';
+                // Show/hide calibration display
+                if (calibrationDisplay) {
+                    calibrationDisplay.style.display = selectMode ? 'flex' : 'none';
                 }
                 // Clear circle when exiting select mode
                 if (!selectMode && videoContainer && videoContainer._clearCircle) {
                     videoContainer._clearCircle();
+                }
+            });
+        }
+
+        // Calibration button handlers
+        if (calibrationRecordBtn) {
+            calibrationRecordBtn.addEventListener('click', () => {
+                if (this.robotConnection && this.robotConnection.socket) {
+                    console.log('[Calibration] Recording pair...');
+                    this.robotConnection.socket.emit('record_calibration_pair');
+                }
+            });
+        }
+
+        if (calibrationSaveBtn) {
+            calibrationSaveBtn.addEventListener('click', () => {
+                if (this.robotConnection && this.robotConnection.socket) {
+                    console.log('[Calibration] Saving to YAML...');
+                    this.robotConnection.socket.emit('save_calibration_pairs');
+                }
+            });
+        }
+
+        if (calibrationClearBtn) {
+            calibrationClearBtn.addEventListener('click', () => {
+                if (this.robotConnection && this.robotConnection.socket) {
+                    if (confirm('Clear all recorded calibration pairs?')) {
+                        console.log('[Calibration] Clearing pairs...');
+                        this.robotConnection.socket.emit('clear_calibration_pairs');
+                    }
+                }
+            });
+        }
+
+        // Listen for calibration responses
+        if (this.robotConnection && this.robotConnection.socket) {
+            this.robotConnection.socket.on('calibration_response', (data) => {
+                if (data.success) {
+                    console.log('[Calibration]', data.message);
+                    if (data.filepath) {
+                        alert(`Saved to: ${data.filename}`);
+                    }
+                } else {
+                    console.error('[Calibration] Error:', data.error);
+                    alert(`Calibration error: ${data.error}`);
+                }
+            });
+
+            this.robotConnection.socket.on('calibration_pairs_updated', (data) => {
+                // Update pairs list
+                if (calibrationPairsList && data.pairs) {
+                    calibrationPairsList.innerHTML = data.pairs.map((pair, i) =>
+                        `<div class="calibration-pair-item">#${i+1}: CAM(${pair.camera_frame.x.toFixed(3)}, ${pair.camera_frame.y.toFixed(3)}, ${pair.camera_frame.z.toFixed(3)}) → ROB(${pair.robot_frame.x.toFixed(3)}, ${pair.robot_frame.y.toFixed(3)}, ${pair.robot_frame.z.toFixed(3)})</div>`
+                    ).join('');
+                } else if (calibrationPairsList && data.total_pairs === 0) {
+                    calibrationPairsList.innerHTML = '';
                 }
             });
         }
@@ -1848,18 +1946,37 @@ class DigitalTwinApp {
             videoContainer._clearCircle = clearCircle;
         }
 
-        // Depth response callback
+        // CAM2BOT display elements
+        const cam2botRow = document.getElementById('cam2bot-row');
+        const cam2botPosX = document.getElementById('cam2bot-pos-x');
+        const cam2botPosY = document.getElementById('cam2bot-pos-y');
+        const cam2botPosZ = document.getElementById('cam2bot-pos-z');
+
+        // Depth response callback - update CAM and CAM2BOT position display
         this.cameraConnection.onDepthResponse = (data) => {
             console.log('[DigitalTwin] Depth response:', data);
             if (data.success && data.position) {
                 const pos = data.position;
-                if (xyzX) xyzX.textContent = `X: ${pos.x.toFixed(3)}`;
-                if (xyzY) xyzY.textContent = `Y: ${pos.y.toFixed(3)}`;
-                if (xyzZ) xyzZ.textContent = `Z: ${pos.z.toFixed(3)}`;
+                if (camPosX) camPosX.textContent = `X: ${pos.x.toFixed(3)}`;
+                if (camPosY) camPosY.textContent = `Y: ${pos.y.toFixed(3)}`;
+                if (camPosZ) camPosZ.textContent = `Z: ${pos.z.toFixed(3)}`;
+
+                // Update CAM2BOT position if available
+                if (data.cam2bot_position) {
+                    const c2b = data.cam2bot_position;
+                    if (cam2botRow) cam2botRow.style.display = 'flex';
+                    if (cam2botPosX) cam2botPosX.textContent = `X: ${c2b.x.toFixed(3)}`;
+                    if (cam2botPosY) cam2botPosY.textContent = `Y: ${c2b.y.toFixed(3)}`;
+                    if (cam2botPosZ) cam2botPosZ.textContent = `Z: ${c2b.z.toFixed(3)}`;
+                } else {
+                    // No cam2bot transform available - hide the row
+                    if (cam2botRow) cam2botRow.style.display = 'none';
+                }
             } else {
-                if (xyzX) xyzX.textContent = 'X: err';
-                if (xyzY) xyzY.textContent = 'Y: err';
-                if (xyzZ) xyzZ.textContent = `Z: err`;
+                if (camPosX) camPosX.textContent = 'X: err';
+                if (camPosY) camPosY.textContent = 'Y: err';
+                if (camPosZ) camPosZ.textContent = `Z: err`;
+                if (cam2botRow) cam2botRow.style.display = 'none';
                 console.warn('[DigitalTwin] Depth query failed:', data.error);
             }
         };

@@ -95,6 +95,9 @@ export class SceneManager {
         this.highlightManager = new HighlightManager(this);
         this.measurementManager = new MeasurementManager(this);
 
+        // Create world origin axes (XYZ at 0,0,0)
+        this.axesManager.createWorldAxes(0.2);
+
         // Current model
         this.currentModel = null;
         this.ignoreLimits = false;

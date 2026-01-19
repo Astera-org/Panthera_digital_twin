@@ -43,7 +43,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 # ============== GLOBAL SETTINGS ==============
 CONTROL_FREQ = 200  # Hz - control loop frequency
 BROADCAST_FREQ = 30  # Hz - WebSocket broadcast frequency
-END_EFFECTOR_OFFSET = 0.07  # meters - offset from Link_6 origin to actual tool tip
+END_EFFECTOR_OFFSET = 0.140  # meters - offset from Link_6 origin to actual tool tip
 # =============================================
 
 # Robot instance
@@ -103,6 +103,68 @@ camera_streamer = None
 camera_streaming = False
 CAMERA_BROADCAST_FREQ = 60  # Hz - image stream frequency
 
+# ============== CALIBRATION DATA ==============
+# Stores pairs of (camera_frame_position, robot_frame_position) for hand-eye calibration
+calibration_pairs = []
+last_camera_position = None  # Stores the most recent camera depth query result
+
+# ============== CAM2BOT TRANSFORMATION ==============
+# Camera to robot base transformation matrix (loaded from cam2bot.yaml)
+cam2bot_R = None  # 3x3 rotation matrix
+cam2bot_t = None  # 3x1 translation vector
+
+
+def load_cam2bot_transform():
+    """Load camera-to-robot transformation from cam2bot.yaml."""
+    global cam2bot_R, cam2bot_t
+
+    cam2bot_path = os.path.join(os.path.dirname(__file__), 'camera', 'cam2bot.yaml')
+
+    if not os.path.exists(cam2bot_path):
+        print(f"[Cam2Bot] Transform file not found: {cam2bot_path}")
+        return False
+
+    try:
+        with open(cam2bot_path, 'r') as f:
+            data = yaml.safe_load(f)
+
+        transform = data.get('camera_to_robot_transform', {})
+        cam2bot_R = np.array(transform.get('rotation_matrix', []))
+        cam2bot_t = np.array(transform.get('translation', []))
+
+        if cam2bot_R.shape != (3, 3) or cam2bot_t.shape != (3,):
+            print("[Cam2Bot] Invalid transform dimensions")
+            cam2bot_R = None
+            cam2bot_t = None
+            return False
+
+        print(f"[Cam2Bot] Transform loaded successfully")
+        print(f"  Translation: [{cam2bot_t[0]:.4f}, {cam2bot_t[1]:.4f}, {cam2bot_t[2]:.4f}]")
+        return True
+
+    except Exception as e:
+        print(f"[Cam2Bot] Failed to load transform: {e}")
+        return False
+
+
+def apply_cam2bot_transform(point_camera):
+    """Transform a point from camera frame to robot base frame.
+
+    Args:
+        point_camera: [x, y, z] in camera frame (meters)
+
+    Returns:
+        [x, y, z] in robot base frame (meters), or None if transform not loaded
+    """
+    global cam2bot_R, cam2bot_t
+
+    if cam2bot_R is None or cam2bot_t is None:
+        return None
+
+    p_cam = np.array(point_camera)
+    p_robot = cam2bot_R @ p_cam + cam2bot_t
+    return p_robot.tolist()
+
 
 def rotation_matrix_to_euler(R):
     """Convert rotation matrix to euler angles (ZYX intrinsic order, degrees)
@@ -127,6 +189,27 @@ def rotation_matrix_to_euler(R):
     pitch = zyx_angles[2]  # X rotation
     yaw = zyx_angles[0]    # Z rotation
     return [roll, pitch, yaw]
+
+
+def apply_end_effector_offset(position, rotation, offset):
+    """Apply end effector offset along Link_6's local Z-axis.
+
+    Args:
+        position: FK position (Link_6 origin in world frame), numpy array [x, y, z]
+        rotation: FK rotation matrix (3x3), Link_6 orientation in world frame
+        offset: End effector offset distance in meters
+
+    Returns:
+        Position of actual tool tip in world frame, numpy array [x, y, z]
+    """
+    position = np.array(position)
+    rotation = np.array(rotation)
+
+    # Z-axis of Link_6 in world frame is the third column of rotation matrix
+    z_axis = rotation[:, 2]
+
+    # Apply offset along Link_6's local Z-axis
+    return position + offset * z_axis
 
 # Timing stats
 timing_stats = {
@@ -436,13 +519,20 @@ def state_broadcast_loop():
                 current_torques = tqe.tolist() if hasattr(tqe, 'tolist') else list(tqe)
 
                 # Calculate forward kinematics
+                # Note: Pinocchio FK should applies tool_offset=[0,0,0.14] here
                 try:
-                    fk = robot.forward_kinematics(pos)
+                    fk = robot.forward_kinematics(pos, tool_offset=np.array([0.0, 0.0, END_EFFECTOR_OFFSET]))
                     if fk:
-                        current_fk['position'] = fk['position'].tolist() if hasattr(fk['position'], 'tolist') else list(fk['position'])
                         rotation = fk['rotation']
+                        current_fk['position'] = fk['position'] if isinstance(fk['position'], list) else fk['position'].tolist()
                         current_fk['rotation'] = rotation.tolist() if hasattr(rotation, 'tolist') else [list(row) for row in rotation]
                         current_fk['euler'] = rotation_matrix_to_euler(rotation)
+
+                        # Debug: print end effector position (throttled to 1Hz)
+                        if not hasattr(state_broadcast_loop, '_last_fk_print') or \
+                           time.time() - state_broadcast_loop._last_fk_print > 1.0:
+                            state_broadcast_loop._last_fk_print = time.time()
+                            print(f"[FK] EE position: [{fk['position'][0]:.4f}, {fk['position'][1]:.4f}, {fk['position'][2]:.4f}]")
                 except Exception as fk_error:
                     pass  # FK calculation failed, keep previous values
 
@@ -456,12 +546,13 @@ def state_broadcast_loop():
                     current_positions[i] += diff * 0.1  # Smooth interpolation
 
                 # Demo mode FK: use robot if available, otherwise skip
+                # Note: Pinocchio FK already applies tool_offset=[0,0,0.14] by default
                 if robot is not None:
                     try:
                         fk = robot.forward_kinematics(np.array(current_positions))
                         if fk:
-                            current_fk['position'] = fk['position'].tolist() if hasattr(fk['position'], 'tolist') else list(fk['position'])
                             rotation = fk['rotation']
+                            current_fk['position'] = fk['position'] if isinstance(fk['position'], list) else fk['position'].tolist()
                             current_fk['rotation'] = rotation.tolist() if hasattr(rotation, 'tolist') else [list(row) for row in rotation]
                             current_fk['euler'] = rotation_matrix_to_euler(rotation)
                     except Exception:
@@ -1342,6 +1433,8 @@ def handle_camera_mode(data):
 @socketio.on('camera_depth_query')
 def handle_camera_depth_query(data):
     """Query depth at a selected region and return 3D position."""
+    global last_camera_position
+
     if not camera_streamer:
         emit('camera_depth_response', {'success': False, 'error': 'Camera not initialized'})
         return
@@ -1353,7 +1446,13 @@ def handle_camera_depth_query(data):
 
     result = camera_streamer.get_depth_at_region(box)
     if result:
-        emit('camera_depth_response', {
+        # Store the camera position for calibration recording
+        last_camera_position = [result['x'], result['y'], result['z']]
+
+        # Apply cam2bot transformation if available
+        cam2bot_position = apply_cam2bot_transform(last_camera_position)
+
+        response = {
             'success': True,
             'position': {
                 'x': result['x'],
@@ -1366,9 +1465,162 @@ def handle_camera_depth_query(data):
                 'median': result['median_depth']
             },
             'box': result['box']
-        })
+        }
+
+        # Add cam2bot position if transformation is available
+        if cam2bot_position:
+            response['cam2bot_position'] = {
+                'x': cam2bot_position[0],
+                'y': cam2bot_position[1],
+                'z': cam2bot_position[2]
+            }
+
+        emit('camera_depth_response', response)
     else:
         emit('camera_depth_response', {'success': False, 'error': 'Could not compute depth (no valid disparity in region)'})
+
+
+# ============== Calibration Recording ==============
+
+@socketio.on('record_calibration_pair')
+def handle_record_calibration_pair(data=None):
+    """Record a calibration pair (camera position + robot EE position)."""
+    global calibration_pairs, last_camera_position, current_fk
+
+    if last_camera_position is None:
+        emit('calibration_response', {
+            'success': False,
+            'error': 'No camera position available. Please select a point in the camera view first.'
+        })
+        return
+
+    # Get current robot end effector position
+    robot_position = current_fk.get('position', None)
+    if robot_position is None or robot_position == [0.0, 0.0, 0.0]:
+        emit('calibration_response', {
+            'success': False,
+            'error': 'No robot position available. Please ensure robot is connected.'
+        })
+        return
+
+    # Create calibration pair (convert numpy types to Python floats for proper YAML serialization)
+    pair = {
+        'camera_frame': {
+            'x': float(last_camera_position[0]),
+            'y': float(last_camera_position[1]),
+            'z': float(last_camera_position[2])
+        },
+        'robot_frame': {
+            'x': float(robot_position[0]),
+            'y': float(robot_position[1]),
+            'z': float(robot_position[2])
+        }
+    }
+
+    calibration_pairs.append(pair)
+    pair_count = len(calibration_pairs)
+
+    print(f"[Calibration] Recorded pair #{pair_count}:")
+    print(f"  Camera: [{pair['camera_frame']['x']:.4f}, {pair['camera_frame']['y']:.4f}, {pair['camera_frame']['z']:.4f}]")
+    print(f"  Robot:  [{pair['robot_frame']['x']:.4f}, {pair['robot_frame']['y']:.4f}, {pair['robot_frame']['z']:.4f}]")
+
+    emit('calibration_response', {
+        'success': True,
+        'message': f'Recorded calibration pair #{pair_count}',
+        'pair': pair,
+        'total_pairs': pair_count
+    })
+
+    # Broadcast updated pairs list to all clients
+    socketio.emit('calibration_pairs_updated', {
+        'total_pairs': pair_count,
+        'pairs': calibration_pairs
+    })
+
+
+@socketio.on('clear_calibration_pairs')
+def handle_clear_calibration_pairs(data=None):
+    """Clear all recorded calibration pairs."""
+    global calibration_pairs
+
+    calibration_pairs = []
+    print("[Calibration] Cleared all calibration pairs")
+
+    emit('calibration_response', {
+        'success': True,
+        'message': 'Cleared all calibration pairs',
+        'total_pairs': 0
+    })
+
+    socketio.emit('calibration_pairs_updated', {'total_pairs': 0, 'pairs': []})
+
+
+@socketio.on('get_calibration_pairs')
+def handle_get_calibration_pairs(data=None):
+    """Get all recorded calibration pairs."""
+    emit('calibration_pairs', {
+        'success': True,
+        'pairs': calibration_pairs,
+        'total_pairs': len(calibration_pairs)
+    })
+
+
+@socketio.on('save_calibration_pairs')
+def handle_save_calibration_pairs(data=None):
+    """Save calibration pairs to a YAML file."""
+    global calibration_pairs
+
+    if len(calibration_pairs) == 0:
+        emit('calibration_response', {
+            'success': False,
+            'error': 'No calibration pairs to save'
+        })
+        return
+
+    # Default filename with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = data.get('filename', f'calibration_pairs_{timestamp}.yaml') if data else f'calibration_pairs_{timestamp}.yaml'
+
+    # Save to calibration directory
+    calibration_dir = os.path.join(os.path.dirname(__file__), '..', 'calibration')
+    os.makedirs(calibration_dir, exist_ok=True)
+    filepath = os.path.join(calibration_dir, filename)
+
+    # Prepare YAML data
+    yaml_data = {
+        'calibration_pairs': [],
+        'metadata': {
+            'timestamp': datetime.now().isoformat(),
+            'total_pairs': len(calibration_pairs),
+            'description': 'Camera-to-robot calibration data pairs'
+        }
+    }
+
+    for i, pair in enumerate(calibration_pairs):
+        yaml_data['calibration_pairs'].append({
+            'pair_id': i + 1,
+            'camera_frame': pair['camera_frame'],
+            'robot_frame': pair['robot_frame']
+        })
+
+    try:
+        with open(filepath, 'w') as f:
+            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
+
+        print(f"[Calibration] Saved {len(calibration_pairs)} pairs to: {filepath}")
+
+        emit('calibration_response', {
+            'success': True,
+            'message': f'Saved {len(calibration_pairs)} calibration pairs',
+            'filepath': filepath,
+            'filename': filename
+        })
+    except Exception as e:
+        emit('calibration_response', {
+            'success': False,
+            'error': f'Failed to save: {str(e)}'
+        })
 
 
 # ============== Camera REST API ==============
@@ -1471,16 +1723,20 @@ if __name__ == '__main__':
             for i in range(6)
         ]
 
+    # Load cam2bot transformation
+    print("\n2. Loading cam2bot transformation...")
+    load_cam2bot_transform()
+
     # Initialize robot
-    print("\n2. Initializing robot...")
+    print("\n3. Initializing robot...")
     init_robot(config_path)
 
     # Start control loops
-    print("\n3. Starting control loops...")
+    print("\n4. Starting control loops...")
     start_loops()
 
     # Start server
-    print(f"\n4. Starting server on port {args.port}...")
+    print(f"\n5. Starting server on port {args.port}...")
     print(f"\n   Backend API: http://localhost:{args.port}")
     print(f"   WebSocket:   ws://localhost:{args.port}")
     print("=" * 50)

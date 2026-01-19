@@ -10,6 +10,149 @@ export class CoordinateAxesManager {
         this.jointAxesHelpers = new Map();
         this.showAxesEnabled = false;
         this.showJointAxesEnabled = false;
+        this.worldAxesHelper = null;
+        this.showWorldAxesEnabled = true;  // World axes visible by default
+    }
+
+    /**
+     * Create world origin axes (XYZ at 0,0,0)
+     * Red = X, Green = Y, Blue = Z
+     * @param {number} size - Length of axes (default 0.3m)
+     */
+    createWorldAxes(size = 0.3) {
+        // Remove existing world axes if any
+        if (this.worldAxesHelper) {
+            this.sceneManager.scene.remove(this.worldAxesHelper);
+            this.worldAxesHelper = null;
+        }
+
+        const axesGroup = new THREE.Group();
+        axesGroup.name = 'worldOriginAxes';
+
+        const axisRadius = size * 0.02;  // 2% of length
+        const axisGeometry = new THREE.CylinderGeometry(axisRadius, axisRadius, size, 12);
+
+        // X axis (red) - points right
+        const xAxisMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const xAxis = new THREE.Mesh(axisGeometry, xAxisMaterial);
+        xAxis.position.x = size / 2;
+        xAxis.rotation.z = -Math.PI / 2;
+        axesGroup.add(xAxis);
+
+        // X axis label
+        const xLabel = this.createAxisLabel('X', 0xff0000);
+        xLabel.position.set(size + 0.03, 0, 0);
+        axesGroup.add(xLabel);
+
+        // Y axis (green) - points up
+        const yAxisMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const yAxis = new THREE.Mesh(axisGeometry, yAxisMaterial);
+        yAxis.position.y = size / 2;
+        axesGroup.add(yAxis);
+
+        // Y axis label
+        const yLabel = this.createAxisLabel('Y', 0x00ff00);
+        yLabel.position.set(0, size + 0.03, 0);
+        axesGroup.add(yLabel);
+
+        // Z axis (blue) - points forward
+        const zAxisMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+        const zAxis = new THREE.Mesh(axisGeometry, zAxisMaterial);
+        zAxis.position.z = size / 2;
+        zAxis.rotation.x = Math.PI / 2;
+        axesGroup.add(zAxis);
+
+        // Z axis label
+        const zLabel = this.createAxisLabel('Z', 0x0000ff);
+        zLabel.position.set(0, 0, size + 0.03);
+        axesGroup.add(zLabel);
+
+        // Add origin sphere (small white sphere at 0,0,0)
+        const originGeometry = new THREE.SphereGeometry(axisRadius * 1.5, 16, 16);
+        const originMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const originSphere = new THREE.Mesh(originGeometry, originMaterial);
+        axesGroup.add(originSphere);
+
+        // Position at world origin
+        axesGroup.position.set(0, 0, 0);
+
+        // Add to scene
+        this.sceneManager.scene.add(axesGroup);
+        this.worldAxesHelper = axesGroup;
+        this.worldAxesHelper.visible = this.showWorldAxesEnabled;
+
+        return axesGroup;
+    }
+
+    /**
+     * Create a text label sprite for axis
+     * @param {string} text - Label text (X, Y, or Z)
+     * @param {number} color - Label color
+     * @returns {THREE.Sprite} Label sprite
+     */
+    createAxisLabel(text, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+
+        // Clear canvas
+        ctx.clearRect(0, 0, 64, 64);
+
+        // Draw text
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Convert hex color to CSS color string
+        const r = (color >> 16) & 255;
+        const g = (color >> 8) & 255;
+        const b = color & 255;
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.fillText(text, 32, 32);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMaterial = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false
+        });
+
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(0.05, 0.05, 1);
+        return sprite;
+    }
+
+    /**
+     * Show world origin axes
+     */
+    showWorldAxes() {
+        this.showWorldAxesEnabled = true;
+        if (this.worldAxesHelper) {
+            this.worldAxesHelper.visible = true;
+        }
+    }
+
+    /**
+     * Hide world origin axes
+     */
+    hideWorldAxes() {
+        this.showWorldAxesEnabled = false;
+        if (this.worldAxesHelper) {
+            this.worldAxesHelper.visible = false;
+        }
+    }
+
+    /**
+     * Toggle world origin axes visibility
+     */
+    toggleWorldAxes() {
+        if (this.showWorldAxesEnabled) {
+            this.hideWorldAxes();
+        } else {
+            this.showWorldAxes();
+        }
+        return this.showWorldAxesEnabled;
     }
 
     /**

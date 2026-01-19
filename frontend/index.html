@@ -713,6 +713,95 @@
             font-weight: 500;
         }
 
+        .camera-calibration-display {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+        }
+
+        .calibration-position-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .calibration-frame-label {
+            color: var(--accent-color);
+            font-weight: 600;
+            min-width: 32px;
+        }
+
+        .calibration-coord {
+            color: var(--text-primary);
+            min-width: 70px;
+        }
+
+        .calibration-buttons {
+            display: flex;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .calibration-btn {
+            padding: 4px 10px;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex: 1;
+        }
+
+        .calibration-record-btn {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .calibration-record-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .calibration-save-btn {
+            background: #28a745;
+            color: white;
+        }
+
+        .calibration-save-btn:hover {
+            background: #218838;
+        }
+
+        .calibration-clear-btn {
+            background: #6c757d;
+            color: white;
+        }
+
+        .calibration-clear-btn:hover {
+            background: #5a6268;
+        }
+
+        .calibration-pairs-list {
+            max-height: 120px;
+            overflow-y: auto;
+            margin-top: 4px;
+            font-size: 10px;
+            color: var(--text-secondary);
+        }
+
+        .calibration-pair-item {
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .calibration-pair-item:last-child {
+            border-bottom: none;
+        }
+
         .camera-status-bar {
             display: flex;
             align-items: center;
@@ -1801,12 +1890,32 @@
                             <button id="camera-mode-depth" class="camera-mode-btn">Depth</button>
                             <button id="camera-mode-select" class="camera-mode-btn">Select</button>
                         </div>
-                        <!-- XYZ Position display -->
-                        <div class="camera-xyz-display" id="camera-xyz-display" style="display: none;">
-                            <span class="camera-xyz-label">Position (m):</span>
-                            <span class="camera-xyz-value" id="camera-xyz-x">X: --</span>
-                            <span class="camera-xyz-value" id="camera-xyz-y">Y: --</span>
-                            <span class="camera-xyz-value" id="camera-xyz-z">Z: --</span>
+                        <!-- Calibration display (CAM, CAM2BOT, and ROB positions + controls + pairs list) -->
+                        <div class="camera-calibration-display" id="camera-calibration-display" style="display: none;">
+                            <div class="calibration-position-row">
+                                <span class="calibration-frame-label">CAM:</span>
+                                <span class="calibration-coord" id="cam-pos-x">X: --</span>
+                                <span class="calibration-coord" id="cam-pos-y">Y: --</span>
+                                <span class="calibration-coord" id="cam-pos-z">Z: --</span>
+                            </div>
+                            <div class="calibration-position-row" id="cam2bot-row" style="display: none;">
+                                <span class="calibration-frame-label" style="color: #34c759;">C2B:</span>
+                                <span class="calibration-coord" id="cam2bot-pos-x">X: --</span>
+                                <span class="calibration-coord" id="cam2bot-pos-y">Y: --</span>
+                                <span class="calibration-coord" id="cam2bot-pos-z">Z: --</span>
+                            </div>
+                            <div class="calibration-position-row">
+                                <span class="calibration-frame-label">ROB:</span>
+                                <span class="calibration-coord" id="rob-pos-x">X: --</span>
+                                <span class="calibration-coord" id="rob-pos-y">Y: --</span>
+                                <span class="calibration-coord" id="rob-pos-z">Z: --</span>
+                            </div>
+                            <div class="calibration-buttons">
+                                <button id="calibration-record-btn" class="calibration-btn calibration-record-btn">Record</button>
+                                <button id="calibration-save-btn" class="calibration-btn calibration-save-btn">Save</button>
+                                <button id="calibration-clear-btn" class="calibration-btn calibration-clear-btn">Clear</button>
+                            </div>
+                            <div class="calibration-pairs-list" id="calibration-pairs-list"></div>
                         </div>
                         <!-- Status bar with stats -->
                         <div class="camera-status-bar">

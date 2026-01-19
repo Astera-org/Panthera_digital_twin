@@ -234,6 +234,7 @@ class CameraStreamer:
 
             # Stereo settings - balanced quality/speed
             stereo.setRectification(True)
+            stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)  # Align depth to left camera (matches intrinsics)
             stereo.initialConfig.censusTransform.kernelSize = dai.StereoDepthConfig.CensusTransform.KernelSize.KERNEL_5x5
             stereo.initialConfig.censusTransform.enableMeanMode = True
             stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
