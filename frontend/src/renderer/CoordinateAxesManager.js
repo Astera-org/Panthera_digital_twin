@@ -12,6 +12,8 @@ export class CoordinateAxesManager {
         this.showJointAxesEnabled = false;
         this.worldAxesHelper = null;
         this.showWorldAxesEnabled = true;  // World axes visible by default
+        this.jointConnectionLines = null;  // Lines connecting joints
+        this.linkOriginDots = new Map();   // Origin dots for each link
     }
 
     /**
@@ -322,8 +324,8 @@ export class CoordinateAxesManager {
         }
 
         // Dynamically adjust axis length based on link size
-        // Axis length = 25% of link size, minimum 3cm, maximum 50cm
-        const axesSize = Math.max(0.03, Math.min(linkSize * 0.25, 0.5));
+        // Axis length = 5% of link size, minimum 1cm, maximum 5cm
+        const axesSize = Math.max(0.01, Math.min(linkSize * 0.05, 0.05));
         const axesGroup = new THREE.Group();
         axesGroup.name = `${linkName}_axes`;
 
@@ -368,6 +370,22 @@ export class CoordinateAxesManager {
         zAxis.castShadow = false;
         zAxis.receiveShadow = false;
         axesGroup.add(zAxis);
+
+        // Add origin dot (white sphere at intersection of axes)
+        const originDotRadius = axisRadius * 3;  // Slightly larger than axis thickness
+        const originGeometry = new THREE.SphereGeometry(originDotRadius, 12, 12);
+        const originMaterial = new THREE.MeshPhongMaterial({
+            color: 0xffffff,
+            shininess: 50,
+            depthTest: true
+        });
+        const originDot = new THREE.Mesh(originGeometry, originMaterial);
+        originDot.castShadow = false;
+        originDot.receiveShadow = false;
+        axesGroup.add(originDot);
+
+        // Store reference to link's threeObject for connection lines
+        this.linkOriginDots.set(linkName, link.threeObject);
 
         // Add to link's threeObject
         if (link.threeObject) {
@@ -542,7 +560,14 @@ export class CoordinateAxesManager {
         // Show all link axes
         this.linkAxesHelpers.forEach((axes) => {
             axes.visible = true;
-        });    }
+        });
+
+        // Show connection lines
+        if (this.jointConnectionLines) {
+            this.jointConnectionLines.visible = true;
+            this.updateConnectionLines();
+        }
+    }
 
     /**
      * Hide all link axes
@@ -553,7 +578,13 @@ export class CoordinateAxesManager {
         // Hide all link axes
         this.linkAxesHelpers.forEach((axes) => {
             axes.visible = false;
-        });    }
+        });
+
+        // Hide connection lines
+        if (this.jointConnectionLines) {
+            this.jointConnectionLines.visible = false;
+        }
+    }
 
     /**
      * Show all joint axes
@@ -670,7 +701,7 @@ export class CoordinateAxesManager {
      * Clear all joint axes
      */
     clearAllJointAxes() {
-        this.jointAxesHelpers.forEach((axisInfo, jointName) => {
+        this.jointAxesHelpers.forEach((axisInfo) => {
             if (axisInfo.isAttached && axisInfo.parent) {
                 axisInfo.parent.remove(axisInfo.mesh);
             }
@@ -679,11 +710,150 @@ export class CoordinateAxesManager {
     }
 
     /**
+     * Create connection lines between parent-child links
+     * @param {Object} robot - The robot object with links hierarchy
+     */
+    createConnectionLines(robot) {
+        // Remove existing lines
+        this.clearConnectionLines();
+
+        if (!robot || !robot.links) {
+            return;
+        }
+
+        const positions = [];
+        const links = robot.links;
+
+        // Build parent-child relationships from joints
+        const parentChildPairs = [];
+        if (robot.joints) {
+            // Handle both Map and plain object
+            const jointIterator = robot.joints instanceof Map
+                ? robot.joints.entries()
+                : Object.entries(robot.joints);
+            for (const [, joint] of jointIterator) {
+                if (joint.parent && joint.child) {
+                    parentChildPairs.push({
+                        parent: joint.parent,
+                        child: joint.child
+                    });
+                }
+            }
+        }
+
+        // Create line segments for each parent-child pair
+        for (const pair of parentChildPairs) {
+            // Handle both Map and plain object for links
+            const parentLink = links instanceof Map ? links.get(pair.parent) : links[pair.parent];
+            const childLink = links instanceof Map ? links.get(pair.child) : links[pair.child];
+
+            if (parentLink && parentLink.threeObject && childLink && childLink.threeObject) {
+                // Get world positions
+                const parentPos = new THREE.Vector3();
+                const childPos = new THREE.Vector3();
+
+                parentLink.threeObject.updateMatrixWorld(true);
+                childLink.threeObject.updateMatrixWorld(true);
+
+                parentLink.threeObject.getWorldPosition(parentPos);
+                childLink.threeObject.getWorldPosition(childPos);
+
+                positions.push(parentPos.x, parentPos.y, parentPos.z);
+                positions.push(childPos.x, childPos.y, childPos.z);
+            }
+        }
+
+        if (positions.length === 0) {
+            return;
+        }
+
+        // Create line geometry
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x888888,  // Grey color
+            linewidth: 2,
+            depthTest: true
+        });
+
+        this.jointConnectionLines = new THREE.LineSegments(geometry, material);
+        this.jointConnectionLines.name = 'jointConnectionLines';
+        this.jointConnectionLines.visible = this.showAxesEnabled;
+
+        this.sceneManager.scene.add(this.jointConnectionLines);
+
+        // Store robot reference for updates
+        this._robot = robot;
+    }
+
+    /**
+     * Update connection lines positions (call this when joints move)
+     */
+    updateConnectionLines() {
+        if (!this.jointConnectionLines || !this._robot) {
+            return;
+        }
+
+        const robot = this._robot;
+        const links = robot.links;
+        const positions = [];
+
+        // Build parent-child relationships from joints
+        if (robot.joints) {
+            // Handle both Map and plain object
+            const jointIterator = robot.joints instanceof Map
+                ? robot.joints.entries()
+                : Object.entries(robot.joints);
+            for (const [, joint] of jointIterator) {
+                if (joint.parent && joint.child) {
+                    // Handle both Map and plain object for links
+                    const parentLink = links instanceof Map ? links.get(joint.parent) : links[joint.parent];
+                    const childLink = links instanceof Map ? links.get(joint.child) : links[joint.child];
+
+                    if (parentLink && parentLink.threeObject && childLink && childLink.threeObject) {
+                        const parentPos = new THREE.Vector3();
+                        const childPos = new THREE.Vector3();
+
+                        parentLink.threeObject.getWorldPosition(parentPos);
+                        childLink.threeObject.getWorldPosition(childPos);
+
+                        positions.push(parentPos.x, parentPos.y, parentPos.z);
+                        positions.push(childPos.x, childPos.y, childPos.z);
+                    }
+                }
+            }
+        }
+
+        // Update geometry
+        const positionAttribute = this.jointConnectionLines.geometry.getAttribute('position');
+        for (let i = 0; i < positions.length; i++) {
+            positionAttribute.array[i] = positions[i];
+        }
+        positionAttribute.needsUpdate = true;
+    }
+
+    /**
+     * Clear connection lines
+     */
+    clearConnectionLines() {
+        if (this.jointConnectionLines) {
+            this.sceneManager.scene.remove(this.jointConnectionLines);
+            this.jointConnectionLines.geometry.dispose();
+            this.jointConnectionLines.material.dispose();
+            this.jointConnectionLines = null;
+        }
+        this._robot = null;
+    }
+
+    /**
      * Clear all axes
      */
     clear() {
         this.clearAllLinkAxes();
         this.clearAllJointAxes();
+        this.clearConnectionLines();
+        this.linkOriginDots.clear();
     }
 }
 

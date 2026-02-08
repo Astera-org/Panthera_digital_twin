@@ -124,6 +124,10 @@ export class SceneManager {
         const renderLoop = () => {
             // Only render when needed (controlled by _dirty flag)
             if (this._dirty) {
+                // Update connection lines when scene needs re-render
+                if (this.axesManager && this.axesManager.showAxesEnabled) {
+                    this.axesManager.updateConnectionLines();
+                }
                 this.renderer.render(this.scene, this.camera);
                 this._dirty = false;
             }
@@ -236,6 +240,9 @@ export class SceneManager {
                 this.axesManager.createLinkAxes(link, linkName, modelSize);
             });
         }
+
+        // Create connection lines between parent-child links
+        this.axesManager.createConnectionLines(model);
 
         // Create rotation axes for each revolute joint
         this.axesManager.clearAllJointAxes();
